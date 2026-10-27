@@ -1,0 +1,28 @@
+ParlorWave Radio
+Copyright © 2026 Aaron Tech Consultants, Inc.
+
+This product includes software developed by ParlorWave Radio, licensed under
+the Apache License, Version 2.0. See LICENSE.
+
+Apart from the typeface material THIRD_PARTY_NOTICES.md describes and the
+generated illustration below, every file in this repository is original
+ParlorWave Radio work. No third-party source code is vendored, copied or
+embedded here, and nothing that ships imports a copyleft library.
+
+The Home Assistant panel's fallback news illustration was generated with
+ChatGPT for ParlorWave Radio; it was not drawn by a person. ParlorWave Radio
+does not claim that it is protected by copyright. It is provided on the same
+terms as the rest of this repository, to the extent any rights in it exist.
+
+The ParlorWave Radio add-on is also published as a container image, which is
+a DIFFERENT artefact from this repository. It additionally contains a Debian
+base system, FFmpeg, CPython and a small set of Python packages installed at
+build time. Several of those are copyleft -- FFmpeg as Debian builds it is
+GPL-2.0-or-later -- and they keep their own licences, which nothing in this
+repository changes or can change.
+
+The image therefore carries no image-wide licence annotation: no single
+expression would be true of it. What it does carry is the Apache licence
+text, with the copyright notice above, and THIRD_PARTY_NOTICES.md -- which
+names the exact package versions inside it and gives exact URLs for the
+corresponding source.

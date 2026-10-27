@@ -1,0 +1,26 @@
+# The COMPLETE Python set the add-on image installs, transitive packages
+# included, each pinned to one exact version, so that the image built on the
+# day of publication is the image that was tested (installed with --no-deps:
+# nothing outside this list can arrive). The direct dependencies are fastapi,
+# uvicorn, pydantic, httpx, cryptography and tzdata; the rest is what they
+# need. Change one version, and THIRD_PARTY_NOTICES.md changes with it.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.10.23
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.1
+fastapi==0.139.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.20
+pycparser==3.12
+pydantic==2.13.4
+pydantic-core==2.46.4
+starlette==1.10.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+tzdata==2026.4
+uvicorn==0.50.0

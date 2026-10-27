@@ -1,0 +1,105 @@
+# ParlorWave Radio add-on -- what must be true of every commit.
+#
+# The expensive job here is the aarch64 build, which runs under QEMU and
+# takes minutes rather than seconds. It is therefore NOT run on every push
+# to a branch: pushes to main, pull requests and manual runs get both
+# architectures; everything else gets amd64, which is native and fast.
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    name: Nothing private
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan this repository for private content
+        run: python3 tests/test_no_private_content.py -v
+
+  addon:
+    name: Add-on repository structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: repository.yaml, config.yaml, Dockerfile, run.sh
+        run: python3 tests/test_addon_repository.py -v
+
+  backend:
+    name: Backend release subset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"          # the runtime the image ships
+      - name: Install the pinned runtime
+        run: pip install -r parlorwave_radio/backend/requirements.txt
+      - name: Every shipped module imports, and the app builds its routes
+        # The full backend suite is not published with this repository,
+        # and runs where the code is written, on every change. What THIS
+        # repository is responsible for is narrower and
+        # sharper: that the subset of modules published here is closed
+        # under import and can actually construct the service. A module
+        # left behind by the export shows up here as an ImportError.
+        run: python3 tests/test_backend_release_subset.py -v
+
+  image:
+    name: Image (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip aarch64 on an ordinary branch push
+        id: gate
+        run: |
+          if [ "${{ matrix.arch }}" = "aarch64" ] \
+             && [ "${{ github.event_name }}" = "push" ] \
+             && [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+        if: steps.gate.outputs.run == 'true' && matrix.arch == 'aarch64'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Build
+        if: steps.gate.outputs.run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: parlorwave_radio
+          platforms: ${{ matrix.arch == 'amd64' && 'linux/amd64' || 'linux/arm64' }}
+          # no BUILD_FROM: the Dockerfile's digest-pinned base, the one the
+          # published image is built from
+          build-args: |
+            BUILD_VERSION=ci
+          push: false
+          load: true
+          tags: parlorwave-radio:ci-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Smoke the built image
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          ./tests/smoke_image.sh parlorwave-radio:ci-${{ matrix.arch }}

@@ -1,0 +1,21 @@
+configuration:
+  music_assistant_url:
+    name: Music Assistant server address
+    description: >-
+      The Music Assistant server as this add-on reaches it, for example
+      http://homeassistant:8095 (the Music Assistant add-on listens on the
+      Home Assistant host).
+  music_assistant_token:
+    name: Music Assistant access token
+    description: >-
+      A long-lived access token created IN MUSIC ASSISTANT, not in Home
+      Assistant. Open Music Assistant, go to Profile > Access tokens >
+      Create new token, and paste the token it shows you here. A Home
+      Assistant long-lived access token will not work: Music Assistant will
+      refuse it, and ParlorWave Radio will report that it was refused.
+      (Music Assistant suggests naming the token after the app that will use
+      it, so "ParlorWave Radio" is a good name for this one.) Stored only in
+      this add-on's options, and never shown anywhere in the ParlorWave
+      Radio interface.
+network:
+  5005/tcp: ParlorWave Radio API (optional; Home Assistant and Music Assistant reach it on the internal network)

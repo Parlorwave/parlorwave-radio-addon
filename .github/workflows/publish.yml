@@ -1,0 +1,214 @@
+# Publish the ParlorWave Radio add-on image to GHCR.
+#
+# GATED, three ways, and none of them happens by accident:
+#
+#   1. there is no `push` or `tag` trigger -- a human runs it by hand;
+#   2. the repository variable PARLORWAVE_PUBLISH_ENABLED must be exactly
+#      "true", and it is not set;
+#   3. the push job runs in the `ghcr` GitHub environment, which is where
+#      required reviewers live.
+#
+# Home Assistant pulls `<image>:<version>` where <version> is the `version`
+# in config.yaml, so the tag this pushes and that value are the same string
+# by construction -- the workflow reads it out of the file rather than
+# taking it as an input that could be typed differently.
+#
+# ORGANISATION PREREQUISITE, AND IT IS NOT OBVIOUS.
+#
+#   A PUBLIC REPOSITORY DOES NOT MAKE A PUBLIC PACKAGE.
+#
+# They are two independent settings. A GHCR package pushed by a workflow's
+# GITHUB_TOKEN is created PRIVATE, and it stays private until somebody
+# changes the package's own visibility. Worse, that option is greyed out
+# entirely unless the organisation allows public packages:
+#
+#   Organisation -> Settings -> Packages
+#     -> Package creation / visibility policy -> Public must be allowed
+#   then the package -> Package settings -> Danger Zone -> Change visibility
+#
+# This failure is easy to miss. A push can succeed, every digest can be
+# correct, and Home Assistant still cannot install the add-on, because the
+# Supervisor pulls ANONYMOUSLY -- there are no registry credentials on an HA
+# OS box. So the `verify-anonymous` job below exists, and it fails the
+# workflow when a stranger cannot reach what was just published.
+name: Publish image
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type the version exactly, e.g. 0.1.0-alpha.1'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build and push multi-arch image
+    runs-on: ubuntu-latest
+    environment: ghcr
+    outputs:
+      image: ${{ steps.v.outputs.image }}
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse unless publishing has been switched on
+        run: |
+          if [ "${{ vars.PARLORWAVE_PUBLISH_ENABLED }}" != "true" ]; then
+            echo "::error::Publishing is disabled. Set the repository variable"
+            echo "::error::PARLORWAVE_PUBLISH_ENABLED=true to allow a push to GHCR."
+            exit 1
+          fi
+
+      - name: Read the version out of config.yaml, and check the confirmation
+        id: v
+        run: |
+          version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' \
+                    parlorwave_radio/config.yaml)
+          image=$(sed -n 's/^image: *//p' parlorwave_radio/config.yaml)
+          [ -n "$version" ] || { echo "::error::no version in config.yaml"; exit 1; }
+          [ -n "$image" ] || { echo "::error::no image in config.yaml"; exit 1; }
+          if [ "${{ inputs.confirm }}" != "$version" ]; then
+            echo "::error::confirmation '${{ inputs.confirm }}' != version '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to overwrite a tag that already exists
+        run: |
+          if docker manifest inspect \
+               "${{ steps.v.outputs.image }}:${{ steps.v.outputs.version }}" \
+               >/dev/null 2>&1; then
+            echo "::error::${{ steps.v.outputs.image }}:${{ steps.v.outputs.version }} already exists."
+            echo "::error::Releases are immutable; raise the version instead."
+            exit 1
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push one multi-architecture manifest
+        uses: docker/build-push-action@v6
+        with:
+          context: parlorwave_radio
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # A plain manifest list, with no attestation manifests beside it.
+          # The default attaches provenance, which changes the index digest
+          # and adds unknown/unknown entries -- harmless to the Supervisor,
+          # but it means the digest published here is not the digest anyone
+          # verified before pushing. Reproducibility is worth more than an
+          # attestation nothing in this pipeline consumes.
+          provenance: false
+          build-args: |
+            BUILD_VERSION=${{ steps.v.outputs.version }}
+          # ONE tag, and not `latest`. Home Assistant pulls the exact
+          # version in config.yaml; a floating tag would only be a second
+          # answer to "which image is this add-on".
+          tags: ${{ steps.v.outputs.image }}:${{ steps.v.outputs.version }}
+          # The version, source, url and licence labels are in the
+          # Dockerfile, so they are right in a hand build too. The commit is
+          # the one fact the Dockerfile cannot know.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
+
+      - name: Say what was published
+        run: |
+          docker buildx imagetools inspect \
+            "${{ steps.v.outputs.image }}:${{ steps.v.outputs.version }}"
+
+  verify-anonymous:
+    name: A stranger can pull it
+    needs: publish
+    runs-on: ubuntu-latest
+    # A SEPARATE JOB, WHICH IS THE WHOLE MECHANISM.
+    #
+    # The publish job ran `docker/login-action`, so its runner holds a GHCR
+    # credential in ~/.docker/config.json and every docker command there
+    # would silently use it -- proving only that the publisher can read its
+    # own package, which was never in doubt. This job gets a fresh runner
+    # that has never logged in to anything, so "anonymous" is a property of
+    # the machine rather than of remembering to clean up.
+    #
+    # `permissions: {}` takes GITHUB_TOKEN's scopes to nothing as well, so
+    # there is no credential here to leak into a registry read even by
+    # accident. No PAT, no secret, no inherited auth: exactly what a
+    # stranger's Home Assistant has.
+    permissions: {}
+    steps:
+      - name: Anonymous registry read of the tag just published
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          test ! -s "${HOME}/.docker/config.json" \
+            || ! grep -q ghcr.io "${HOME}/.docker/config.json" \
+            || { echo "::error::this runner already holds a ghcr.io credential; the check would not be anonymous"; exit 1; }
+
+          repo="${IMAGE#ghcr.io/}"
+          echo "anonymous consumer view of ${IMAGE}:${VERSION}"
+
+          fail() {
+            echo "::error::GHCR image was published but is not anonymously pullable."
+            echo "::error::Verify ParlorWave organization package policy allows Public packages"
+            echo "::error::and verify the GHCR package visibility itself is Public."
+            echo "::error::(Organisation -> Settings -> Packages -> package creation/visibility"
+            echo "::error:: policy, then the package -> Package settings -> Danger Zone."
+            echo "::error:: A public REPOSITORY does not make a public PACKAGE.)"
+            echo "::error::detail: $1"
+            exit 1
+          }
+
+          # 1. the anonymous bearer token a registry client would fetch.
+          #    A private package answers 401 here even though the initial
+          #    manifest challenge looks identical for public and private --
+          #    which is why the challenge alone is not evidence.
+          code=$(curl -sS -o /tmp/token.json -w '%{http_code}' \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull") || fail "token request failed"
+          [ "$code" = "200" ] || fail "anonymous token endpoint returned HTTP $code"
+          token=$(python3 -c "import json;d=json.load(open('/tmp/token.json'));print(d.get('token') or d['access_token'])")
+          [ -n "$token" ] || fail "token endpoint returned no token"
+          echo "  anonymous token: issued"
+
+          # 2. the manifest itself, with that anonymous token.
+          code=$(curl -sS -o /tmp/index.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+            "https://ghcr.io/v2/${repo}/manifests/${VERSION}") || fail "manifest request failed"
+          [ "$code" = "200" ] || fail "anonymous manifest request returned HTTP $code"
+          echo "  anonymous manifest: HTTP 200"
+
+          # 3. it is the multi-architecture index the add-on needs, and the
+          #    architectures config.yaml declares are actually in it.
+          python3 - <<'PY'
+          import json, sys
+          idx = json.load(open("/tmp/index.json"))
+          plats = {f"{m['platform']['os']}/{m['platform']['architecture']}"
+                   for m in idx.get("manifests", [])
+                   if m.get("platform", {}).get("architecture") != "unknown"}
+          print("  platforms:", ", ".join(sorted(plats)) or "(none)")
+          missing = {"linux/amd64", "linux/arm64"} - plats
+          if missing:
+              sys.exit(f"the published index is missing {sorted(missing)}")
+          PY
+
+          # 4. finally, a real client, on a runner that never logged in.
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}" > /dev/null \
+            || fail "anonymous docker buildx imagetools inspect failed"
+          echo "  anonymous client inspect: OK"
+
+          echo "a stranger can pull ${IMAGE}:${VERSION}"

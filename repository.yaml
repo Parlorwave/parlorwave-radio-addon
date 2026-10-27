@@ -1,0 +1,4 @@
+# https://developers.home-assistant.io/docs/apps/repository#repository-configuration
+name: ParlorWave Radio
+url: https://github.com/parlorwave/parlorwave-radio-addon
+maintainer: ParlorWave Radio <https://github.com/parlorwave>

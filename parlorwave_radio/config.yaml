@@ -1,0 +1,46 @@
+# https://developers.home-assistant.io/docs/apps/configuration
+#
+# The ParlorWave Radio backend as a Home Assistant add-on (Alpha 0.1).
+# Network model (verified against Supervisor / Core source):
+#   * Home Assistant Core and the integration reach this add-on on the
+#     internal add-on network by hostname; the connection details travel by
+#     Supervisor discovery (`discovery: [parlorwave_radio]`), so no host
+#     port is published and no key is typed.
+#   * Music Assistant fetches finite break audio from the same internal
+#     hostname / IP; the add-on advertises that URL itself.
+#   * Speech renders through the Core API proxy (homeassistant_api: true,
+#     SUPERVISOR_TOKEN); playback and queues stay with Music Assistant.
+name: ParlorWave Radio
+version: "0.1.0-alpha.4"
+# Published multi-architecture image; the tag is `version` above.
+image: ghcr.io/parlorwave/parlorwave-radio-addon
+slug: parlorwave_radio
+description: The DJ for your Music Assistant stations -- short spoken breaks with the time, weather and what is next, in your own Home Assistant voices.
+url: https://github.com/parlorwave/parlorwave-radio-addon
+arch:
+  - aarch64
+  - amd64
+startup: services
+init: false
+homeassistant_api: true
+discovery:
+  - parlorwave_radio
+# The control API is NOT published on the host: Home Assistant and Music
+# Assistant reach it internally. A user may map the port for debugging.
+ports:
+  5005/tcp: null
+ports_description:
+  5005/tcp: "ParlorWave Radio API (optional; Home Assistant and Music Assistant reach it on the internal network)"
+watchdog: "http://[HOST]:[PORT:5005]/"
+backup_exclude:
+  - broadcast_audio/*
+  - news_audio/*
+# Music Assistant runs on the host network; `homeassistant` is the host as
+# the add-on network names it, so the default URL is the Music Assistant
+# add-on on this same machine. The token is created in Music Assistant.
+options:
+  music_assistant_url: "http://homeassistant:8095"
+  music_assistant_token: ""
+schema:
+  music_assistant_url: url
+  music_assistant_token: "password?"
